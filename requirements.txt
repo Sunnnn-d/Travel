@@ -1,0 +1,38 @@
+# ========== 核心框架依赖 ==========
+# LangChain - 大语言模型应用开发框架
+langchain>=0.3.23
+
+# LangGraph - 工作流编排和状态管理
+langgraph>=0.3.31
+
+# Pydantic - 数据验证和设置管理
+pydantic>=2.11.3
+
+# ========== LLM提供商依赖 ==========
+# LangChain OpenAI - 用于调用兼容OpenAI接口的LLM（包括阿里云通义千问）
+langchain-openai>=0.3.0
+
+# DeepSeek支持（可选，如需使用DeepSeek模型）
+langchain-deepseek>=0.1.3
+
+# ========== 前端界面依赖 ==========
+# Streamlit - Web应用框架，用于构建交互式UI
+streamlit>=1.40.0
+
+# ========== 环境变量管理 ==========
+# python-dotenv - 从.env文件加载环境变量
+python-dotenv>=1.1.0
+
+# ========== 数据处理依赖 ==========
+# requests - HTTP请求库（用于可能的API调用）
+requests>=2.31.0
+
+# aiohttp - 异步HTTP客户端/服务器（LangChain异步调用需要）
+aiohttp>=3.9.0
+
+# ========== 日志和工具 ==========
+# tenacity - 重试机制库（LangChain内部使用）
+tenacity>=8.2.0
+
+# typing-extensions - 类型提示扩展
+typing-extensions>=4.8.0
