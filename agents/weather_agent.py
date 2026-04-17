@@ -471,4 +471,3 @@ class WeatherAgent:
         # 所有解析方法均失败，返回默认结构
         logger.error("✗ 所有JSON解析方法均失败，返回默认结构")
         return self._get_default_weather_analysis()
-
