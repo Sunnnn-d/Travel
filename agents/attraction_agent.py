@@ -465,7 +465,7 @@ class AttractionAgent:
         try:
             # 策略2：查找 markdown 代码块中的 JSON
             import re
-            json_pattern = r''
+            json_pattern = r'```json\n(.*?)\n```'
             match = re.search(json_pattern, response_content, re.DOTALL)
 
             if match:
