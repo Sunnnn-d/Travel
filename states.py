@@ -81,5 +81,5 @@ class TravelInfo(BaseModel):
 
     preferences: Dict = {}
     weather_info: Dict = {}
-    attractions: List[Dict]
+    attractions: List[Dict] = []
     itinerary: Dict = {}

@@ -157,20 +157,35 @@ class TravelPlannerWorkflow:
             # 检查每日预报中的降雨概率
             if daily_forecast:
                 total_rain_prob = 0
+                valid_days = 0
                 for day in daily_forecast:
                     prob = day.get("rain_probability", 0)
-                    if isinstance(prob, str):
-                        # 如果是字符串格式如 "70%"，提取数字
-                        prob = int(''.join(filter(str.isdigit, prob)) or 0)
-                    total_rain_prob += prob
+                    try:
+                        if isinstance(prob, str):
+                            # 如果是字符串格式如 "70%"，提取数字
+                            prob_str = ''.join(filter(str.isdigit, prob))
+                            if prob_str:
+                                prob = int(prob_str)
+                            else:
+                                prob = 0
+                        elif not isinstance(prob, (int, float)):
+                            prob = 0
+                        total_rain_prob += prob
+                        valid_days += 1
+                    except (ValueError, TypeError) as e:
+                        print(f"解析降雨概率时出错: {e}，使用默认值 0")
+                        prob = 0
 
                 # 计算平均降雨概率
-                avg_rain_prob = total_rain_prob / len(daily_forecast)
-                rain_probability = avg_rain_prob
+                if valid_days > 0:
+                    avg_rain_prob = total_rain_prob / valid_days
+                    rain_probability = avg_rain_prob
 
-                # 如果平均降雨概率超过50%，认为有雨
-                if avg_rain_prob > 50:
-                    has_rain = True
+                    # 如果平均降雨概率超过50%，认为有雨
+                    if avg_rain_prob > 50:
+                        has_rain = True
+                else:
+                    rain_probability = 0
 
             # 判断标准3：检查是否有恶劣天气警告
             weather_warnings = weather_info.get("warnings", [])
@@ -491,90 +506,7 @@ class TravelPlannerWorkflow:
                 "attractions": []
             }
 
-    async def recommend_attractions(self, state: TravelInfo) -> Dict[str, Any]:
-        """
-        节点处理函数：推荐景点（已废弃，保留作为备用）
 
-        注意：此方法已被 recommend_indoor_attractions 和 recommend_outdoor_attractions
-        替代，但保留此方法以防需要回退到无条件推荐模式。
-
-        参数:
-            state (TravelInfo): 当前工作流状态，包含目的地、天气信息等
-
-        返回:
-            Dict[str, Any]: 更新后的状态字典，包含景点推荐列表
-        """
-        print("\n" + "=" * 60)
-        print("【步骤 2/3】正在推荐景点...")
-        print("=" * 60)
-
-        try:
-            # 从状态中提取必要的参数
-            destination = state.destination
-            duration = state.duration
-            preferences = state.preferences
-            weather_info = state.weather_info
-
-            print(f"目的地: {destination}")
-            print(f"旅行天数: {duration}天")
-
-            # 如果有天气信息，显示天气概况
-            if weather_info:
-                overall_weather = weather_info.get("overall_weather", {})
-                if overall_weather:
-                    summary = overall_weather.get("summary", "")
-                    print(f"天气状况: {summary}")
-
-            # 调用 AttractionAgent 进行景点推荐
-            # 传入天气信息，让推荐更加智能化
-            attraction_result = await self.attraction_agent.recommend_attractions(
-                destination=destination,
-                weather_info=weather_info,
-                preferences=preferences,
-                duration=duration
-            )
-
-            # 检查景点推荐是否成功
-            if attraction_result.get("success"):
-                # 提取景点列表
-                attractions = attraction_result.get("attractions", [])
-                total_count = len(attractions)
-                summary = attraction_result.get("recommendation_summary", "")
-
-                print(f"\n✓ 景点推荐成功")
-                print(f"  - 推荐景点数量: {total_count}个")
-                if summary:
-                    print(f"  - 推荐理由: {summary}")
-
-                # 打印每个景点的简要信息
-                if attractions:
-                    print(f"\n  推荐景点列表:")
-                    for idx, attraction in enumerate(attractions, 1):
-                        name = attraction.get("name", "未知景点")
-                        attr_type = attraction.get("type", "未知类型")
-                        rating = attraction.get("rating", 0)
-                        print(f"    {idx}. {name} ({attr_type}) - 推荐指数: {rating}/5")
-
-                # 返回更新的状态，将景点列表存入状态
-                return {
-                    "attractions": attractions
-                }
-            else:
-                # 景点推荐失败，记录错误信息
-                error_message = attraction_result.get("message", "未知错误")
-                print(f"\n✗ 景点推荐失败: {error_message}")
-
-                # 返回空列表，避免后续节点出错
-                return {
-                    "attractions": []
-                }
-
-        except Exception as e:
-            # 捕获并处理异常
-            print(f"\n✗ 景点推荐过程中发生错误: {str(e)}")
-            return {
-                "attractions": []
-            }
 
     async def plan_itinerary(self, state: TravelInfo) -> Dict[str, Any]:
         """
@@ -738,6 +670,14 @@ async def main():
         3. 调用工作流的 run 方法执行规划
         4. 打印最终的行程结果
     """
+    # 配置日志系统
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
     print("=" * 60)
     print("       智能旅行规划系统")
     print("=" * 60)

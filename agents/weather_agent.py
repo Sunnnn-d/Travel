@@ -1,8 +1,9 @@
 import json
 import os
 import logging
+import requests
 from typing import Dict, Optional, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -71,6 +72,10 @@ class WeatherAgent:
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"  # 阿里云 API 端点
         )
 
+        # 天气 API 配置
+        self.weather_api_key = "969f5924c2542b20279e713d4547aaf6"  # OpenWeatherMap API Key
+        self.weather_api_base_url = "https://api.openweathermap.org/data/2.5"
+
         logger.info("WeatherAgent 初始化完成，使用模型: qwen-turbo, 温度: 0.3")
 
     async def analyze_weather(
@@ -83,7 +88,7 @@ class WeatherAgent:
         """
         异步分析目的地天气情况
 
-        根据用户提供的目的地和日期，使用大语言模型生成天气分析报告和出行建议。
+        根据用户提供的目的地和日期，使用真实天气 API 获取数据，然后结合 LLM 生成天气分析报告和出行建议。
         包含完整的错误处理机制，确保即使 API 调用或 JSON 解析失败也能返回有效结果。
 
         参数:
@@ -142,31 +147,51 @@ class WeatherAgent:
                     timestamp=timestamp
                 )
 
-            # 第二步：构建系统提示词，指定天气分析的格式和要求
+            # 第二步：获取真实天气数据
+            logger.info("正在获取真实天气数据...")
+            weather_api_data = None
+            coordinates = self._get_city_coordinates(destination)
+            
+            if coordinates and coordinates.get("lat") and coordinates.get("lon"):
+                logger.info(f"获取到 {destination} 的坐标: {coordinates}")
+                weather_api_data = self._get_weather_forecast(
+                    coordinates["lat"], 
+                    coordinates["lon"], 
+                    min(duration, 5)  # OpenWeatherMap 免费版最多提供 5 天预报
+                )
+                if weather_api_data:
+                    logger.info("成功获取天气 forecast 数据")
+                else:
+                    logger.warning("未能获取天气 forecast 数据，将使用 LLM 推断")
+            else:
+                logger.warning("未能获取城市坐标，将使用 LLM 推断天气")
+
+            # 第三步：构建系统提示词，指定天气分析的格式和要求
             logger.debug("正在构建系统提示词...")
             system_prompt = self._build_system_prompt()
 
-            # 第三步：构建用户消息，包含具体的旅行信息
+            # 第四步：构建用户消息，包含具体的旅行信息和真实天气数据
             logger.debug("正在构建用户消息...")
             user_message = self._build_user_message(
                 destination,
                 start_date,
                 duration,
-                preferences
+                preferences,
+                weather_api_data
             )
 
-            # 第四步：异步调用大语言模型进行天气分析
+            # 第五步：异步调用大语言模型进行天气分析
             logger.info("正在调用大语言模型进行天气分析...")
             response = await self.model.ainvoke([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_message)
             ])
 
-            # 第五步：提取模型返回的内容
+            # 第六步：提取模型返回的内容
             response_content = response.content
             logger.info(f"模型响应接收成功，响应长度: {len(response_content)} 字符")
 
-            # 第六步：尝试解析 JSON 格式的响应
+            # 第七步：尝试解析 JSON 格式的响应
             logger.debug("正在解析模型响应...")
             weather_data = self._parse_response(response_content)
 
@@ -179,7 +204,7 @@ class WeatherAgent:
             logger.info(f"  - 最佳出行日: {len(weather_data.get('best_travel_days', []))}天")
             logger.info(f"  - 预警信息: {len(weather_data.get('warnings', []))}条")
 
-            # 第七步：返回成功的结果
+            # 第八步：返回成功的结果
             return {
                 "success": True,
                 "weather_analysis": weather_data,
@@ -371,18 +396,20 @@ class WeatherAgent:
             destination: str,
             start_date: str,
             duration: int,
-            preferences: Dict[str, Any]
+            preferences: Dict[str, Any],
+            weather_api_data: Optional[Dict] = None
     ) -> str:
         """
         构建用户消息
 
-        将用户的旅行信息格式化为清晰的消息文本，供大语言模型分析。
+        将用户的旅行信息和真实天气数据格式化为清晰的消息文本，供大语言模型分析。
 
         参数:
             destination (str): 目的地名称
             start_date (str): 开始日期
             duration (int): 旅行天数
             preferences (Dict[str, Any]): 用户偏好
+            weather_api_data (Optional[Dict]): 真实天气 API 数据
 
         返回:
             str: 格式化后的用户消息
@@ -401,9 +428,100 @@ class WeatherAgent:
         else:
             message += "\n无特殊偏好，请提供全面的天气分析"
 
+        # 添加真实天气 API 数据
+        if weather_api_data:
+            message += "\n\n【真实天气数据】\n"
+            message += "以下是从 OpenWeatherMap API 获取的真实天气数据，请基于这些数据进行分析：\n"
+            
+            # 提取并格式化天气数据
+            if "list" in weather_api_data:
+                daily_data = {}
+                for item in weather_api_data["list"]:
+                    date = item["dt_txt"].split(" ")[0]
+                    if date not in daily_data:
+                        daily_data[date] = {
+                            "temp_min": item["main"]["temp_min"],
+                            "temp_max": item["main"]["temp_max"],
+                            "condition": item["weather"][0]["description"],
+                            "humidity": item["main"]["humidity"],
+                            "wind_speed": item["wind"]["speed"],
+                            "precipitation_chance": item.get("pop", 0) * 100
+                        }
+                
+                for date, data in daily_data.items():
+                    message += f"\n日期: {date}\n"
+                    message += f"  温度范围: {data['temp_min']:.1f}°C 至 {data['temp_max']:.1f}°C\n"
+                    message += f"  天气状况: {data['condition']}\n"
+                    message += f"  湿度: {data['humidity']}%\n"
+                    message += f"  风速: {data['wind_speed']} m/s\n"
+                    message += f"  降水概率: {data['precipitation_chance']:.1f}%\n"
+            else:
+                message += "\n未获取到详细天气数据\n"
+        else:
+            message += "\n\n【天气数据】\n"
+            message += "未获取到真实天气数据，请基于历史气候数据进行合理推断\n"
+
         message += "\n\n请根据以上信息，为我提供详细的天气分析和出行建议，并以 JSON 格式返回结果。"
 
         return message
+
+    def _get_city_coordinates(self, city_name: str) -> Optional[Dict[str, float]]:
+        """
+        获取城市的经纬度坐标
+
+        参数:
+            city_name (str): 城市名称
+
+        返回:
+            Optional[Dict[str, float]]: 包含经度和纬度的字典，失败时返回 None
+        """
+        try:
+            url = f"{self.weather_api_base_url}/weather"
+            params = {
+                "q": city_name,
+                "appid": self.weather_api_key,
+                "units": "metric",
+                "lang": "zh_cn"
+            }
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "lat": data.get("coord", {}).get("lat"),
+                "lon": data.get("coord", {}).get("lon")
+            }
+        except Exception as e:
+            logger.error(f"获取城市坐标失败: {str(e)}")
+            return None
+
+    def _get_weather_forecast(self, lat: float, lon: float, days: int) -> Optional[Dict]:
+        """
+        获取天气 forecast 数据
+
+        参数:
+            lat (float): 纬度
+            lon (float): 经度
+            days (int): 预测天数
+
+        返回:
+            Optional[Dict]: 天气 forecast 数据，失败时返回 None
+        """
+        try:
+            url = f"{self.weather_api_base_url}/forecast"
+            params = {
+                "lat": lat,
+                "lon": lon,
+                "appid": self.weather_api_key,
+                "units": "metric",
+                "lang": "zh_cn",
+                "cnt": days * 8  # 每3小时一个数据点，一天8个
+            }
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"获取天气 forecast 失败: {str(e)}")
+            return None
 
     def _parse_response(self, response_content: str) -> Dict[str, Any]:
         """
